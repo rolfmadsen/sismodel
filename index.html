@@ -401,6 +401,11 @@
             db.attributter.forEach(a => {
                 searchData.push({ type: 'Attribut', pakke: a.Pakke || 'Uden Pakke', klasse: a.Klasse, text: a.Attribut, definition: a.Definition || '' });
             });
+            
+            // TILFØJ DENNE BLOK FOR AT MEDTAGE VÆRDILISTER:
+            db.vaerdilister.forEach(v => {
+                searchData.push({ type: 'Værdiliste', pakke: v.Pakke || 'Uden Pakke', klasse: v.Værdiliste, text: v.Værdiliste, definition: v.Definition || '' });
+            });
 
             const options = {
                 includeScore: true,
