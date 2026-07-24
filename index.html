@@ -217,7 +217,7 @@
     </div>
 
     <div id="sidebar">
-        <div class="sidebar-header">
+        <div class="sidebar-header" onclick="goHome()" style="cursor: pointer;" title="Gå til forside">
             <h1>
                 <span>SIS Model</span>
                 <span class="version-badge" id="modelVersionBadge">v1.1.9</span>
@@ -331,7 +331,26 @@
             reader.onload = (evt) => parseAndLoadData(evt.target.result);
             reader.readAsArrayBuffer(file);
         }
-
+        function goHome() {
+            // Ryd URL hash
+            history.replaceState(null, '', window.location.pathname);
+            
+            // Fjern aktiv markering fra pakker i menuen
+            document.querySelectorAll('.package-item').forEach(el => el.classList.remove('active'));
+            
+            // Luk evt. åbent detaljepanel
+            closeDetails();
+            
+            // Vis velkomstsiden og skjul diagram-elementer
+            document.getElementById('welcome-view').style.display = 'block';
+            document.getElementById('diagramLegend').style.display = 'none';
+            document.getElementById('zoomControls').style.display = 'none';
+            document.getElementById('pkgTitle').innerText = 'Oversigt';
+            document.getElementById('statInfo').innerText = '';
+            
+            // Ryd Mermaid lærredet
+            document.getElementById('mermaidTarget').innerHTML = '';
+        }
         const dz = document.getElementById('drop-zone');
         dz.addEventListener('dragover', (e) => e.preventDefault());
         dz.addEventListener('drop', (e) => {
@@ -365,8 +384,10 @@
             if (window.location.hash) {
                 handleHashNavigation();
             } else {
-                const first = document.querySelector('.package-item');
-                if (first) first.click();
+                // Lad forsiden være åben ved opstart (ingen automatisk .click() her)
+                document.getElementById('pkgTitle').innerText = 'Oversigt';
+                document.getElementById('diagramLegend').style.display = 'none';
+                document.getElementById('zoomControls').style.display = 'none';
             }
         }
 
@@ -616,6 +637,9 @@
             document.querySelectorAll('.package-item').forEach(el => el.classList.remove('active'));
             if (element) element.classList.add('active');
 
+            document.getElementById('welcome-view').style.display = 'none';
+            document.getElementById('diagramLegend').style.display = 'flex';
+            document.getElementById('zoomControls').style.display = 'flex';
             document.getElementById('pkgTitle').innerText = pkgName;
             closeDetails();
 
