@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIS Informationsmodel Visualiser</title>
+    <!-- SheetJS til Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Mermaid v10.9.1 -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.basic.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #f8fafc;
+            --bg-card: #ffffff;
+            --border-color: #cbd5e1;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --accent: #1e3a8a;
+            --accent-light: #eff6ff;
+            --sidebar-width: 320px;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg-primary); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+
+        #drop-zone {
+            position: absolute;
+            inset: 0;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            padding: 2rem;
+        }
+
+        .drop-box {
+            border: 3px dashed #94a3b8;
+            border-radius: 12px;
+            padding: 3rem;
+            background: #f8fafc;
+            text-align: center;
+            cursor: pointer;
+            max-width: 480px;
+            width: 100%;
+        }
+
+        .drop-box:hover { border-color: var(--accent); background: var(--accent-light); }
+        .drop-box h2 { color: var(--accent); margin-bottom: 0.5rem; }
+        .drop-box p { color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.9rem; }
+        .btn { background: var(--accent); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 6px; font-weight: 600; cursor: pointer; }
+
+        #sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-card);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Ren hvid header uden mørke baggrunde */
+        .sidebar-header {
+            padding: 1.25rem 1rem 1rem 1rem;
+            background: #ffffff;
+            color: var(--text-main);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .sidebar-header h1 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 0.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .version-badge {
+            display: inline-block;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #334155;
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 0.15rem 0.5rem;
+            border-radius: 6px;
+            letter-spacing: 0.02em;
+        }
+        
+        .sidebar-header p {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+
+        .search-box { padding: 0.75rem; border-bottom: 1px solid var(--border-color); }
+        .search-box input { width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; }
+
+        .package-list { overflow-y: auto; flex: 1; padding: 0.5rem; }
+        .package-item {
+            padding: 0.6rem 0.75rem;
+            margin-bottom: 0.25rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: flex;
+            justify-content: space-between;
+        }
+        .package-item:hover { background: var(--accent-light); }
+        .package-item.active { background: #dbeafe; font-weight: bold; color: var(--accent); }
+
+        #main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .top-bar { padding: 0.75rem 1.5rem; background: var(--bg-card); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+
+        .workspace { flex: 1; display: flex; overflow: hidden; position: relative; }
+        
+        #diagram-container {
+            flex: 1;
+            height: 100%;
+            width: 100%;
+            background: #f8fafc;
+            position: relative;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        #mermaidTarget {
+            width: 100%;
+            height: 100%;
+        }
+
+        #mermaidTarget svg {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: none !important;
+            max-height: none !important;
+            display: block;
+            overflow: visible !important;
+        }
+
+        /* Farve-stilarter via CSS */
+        .enumStyle rect, .enumStyle g { fill: #d8f3dc !important; stroke: #2b9348 !important; }
+        .borrowedStyle rect, .borrowedStyle g { fill: #68d8d6 !important; stroke: #07b1ca !important; }
+        .localStyle rect, .localStyle g { fill: #fefae0 !important; stroke: #dda15e !important; }
+
+        /* Detaljepanel */
+        #details-panel { width: 420px; background: white; border-left: 1px solid var(--border-color); overflow-y: auto; padding: 1.5rem; display: none; }
+        #details-panel.open { display: block; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+        .close-btn { cursor: pointer; border: none; background: none; font-size: 1.5rem; }
+
+        .meta-group { margin-bottom: 1rem; }
+        .meta-group h4 { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.25rem; }
+        .meta-group p { font-size: 0.875rem; line-height: 1.4; color: #334155; }
+
+        .rel-list { font-size: 0.8rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 0.5rem; margin-top: 0.5rem; }
+        .rel-item { padding: 0.3rem 0; border-bottom: 1px solid #edf2f7; }
+        .rel-item:last-child { border-bottom: none; }
+
+        .zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            z-index: 50;
+        }
+        .zoom-btn {
+            width: 36px;
+            height: 36px;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .zoom-btn:hover { background: var(--accent-light); color: var(--accent); }
+
+        .diagram-legend {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.75rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            gap: 12px;
+            z-index: 40;
+        }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .legend-box { width: 14px; height: 14px; border-radius: 2px; border: 1px solid #64748b; }
+        .box-blue { background: #68d8d6; border-color: #07b1ca; }
+        .box-green { background: #d8f3dc; border-color: #2b9348; }
+        .box-cream { background: #fefae0; border-color: #dda15e; }
+    </style>
+</head>
+<body>
+
+    <div id="drop-zone">
+        <div class="drop-box" onclick="document.getElementById('file-input').click()">
+            <h2>SIS Model Visualiser</h2>
+            <p>Træk din <strong>SIS_IM_v1.1.9_20260302_1553.xlsx</strong> fil herhen</p>
+            <button class="btn">Vælg Excel-fil</button>
+            <input type="file" id="file-input" accept=".xlsx" style="display:none" onchange="loadFile(event)">
+        </div>
+    </div>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h1>
+                <span>SIS Model</span>
+                <span class="version-badge" id="modelVersionBadge">v1.1.9</span>
+            </h1>
+            <p id="modelSubTitle">Informationsmodel for videregående uddannelse</p>
+        </div>
+        <div class="search-box">
+            <!-- Skift det gamle input ud med dette -->
+            <input type="text" id="pkgSearch" list="searchOptions" placeholder="Søg pakke, klasse eller attribut..." oninput="filterPkgs()">
+            <datalist id="searchOptions">
+                <!-- Indholdet udfyldes dynamisk af JavaScript -->
+            </datalist>
+        </div>
+        <div class="package-list" id="pkgList"></div>
+    </div>
+
+    <div id="main-content">
+        <div class="top-bar">
+            <h2 id="pkgTitle">Vælg en pakke</h2>
+            <div id="statInfo" style="font-size:0.85rem; color:var(--text-muted);"></div>
+        </div>
+        <div class="workspace">
+            <div id="diagram-container">
+                <div class="diagram-legend">
+                    <div class="legend-item"><div class="legend-box box-blue"></div> Fremmed / Fællesbegreb</div>
+                    <div class="legend-item"><div class="legend-box box-green"></div> Enumeration («enumeration»)</div>
+                    <div class="legend-item"><div class="legend-box box-cream"></div> Lokalt begreb</div>
+                </div>
+                <div id="mermaidTarget"></div>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" onclick="zoomIn()">+</button>
+                    <button class="zoom-btn" onclick="zoomOut()">-</button>
+                    <button class="zoom-btn" onclick="resetZoom()">⟲</button>
+                </div>
+            </div>
+            <div id="details-panel">
+                <div class="panel-header">
+                    <h3 id="detTitle">Klasse</h3>
+                    <button class="close-btn" onclick="closeDetails()">&times;</button>
+                </div>
+                <div id="detContent"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+        const DEFAULT_EXCEL_FILE = 'SIS_IM_v1.1.9_20260302_1553.xlsx';
+
+        let db = { klasser: [], attributter: [], relationer: [], vaerdilister: [] };
+        let fuseIndex = null;
+        
+        let activeVB = { x: 0, y: 0, w: 1000, h: 800 };
+        let origVB = { x: 0, y: 0, w: 1000, h: 800 };
+        let isPanning = false;
+        let startMouse = { x: 0, y: 0 };
+        let startVB = { x: 0, y: 0 };
+
+        mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: 'loose',
+            theme: 'neutral'
+        });
+
+        window.addEventListener('DOMContentLoaded', () => {
+            initNativeSvgPanZoom();
+            autoLoadDefaultFile();
+            setupAutocompleteContainer();
+        });
+
+        window.addEventListener('hashchange', handleHashNavigation);
+
+        function autoLoadDefaultFile() {
+            fetch(DEFAULT_EXCEL_FILE)
+                .then(res => {
+                    if (!res.ok) throw new Error('Filen blev ikke fundet på serveren');
+                    return res.arrayBuffer();
+                })
+                .then(buffer => {
+                    extractVersionFromFilename(DEFAULT_EXCEL_FILE);
+                    parseAndLoadData(buffer);
+                })
+                .catch(() => {
+                    console.log('Standardfil kunne ikke hentes automatisk over file://. Viser drop-zone.');
+                });
+        }
+
+        function loadFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            extractVersionFromFilename(file.name);
+            
+            const reader = new FileReader();
+            reader.onload = (evt) => parseAndLoadData(evt.target.result);
+            reader.readAsArrayBuffer(file);
+        }
+
+        const dz = document.getElementById('drop-zone');
+        dz.addEventListener('dragover', (e) => e.preventDefault());
+        dz.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length) {
+                const file = e.dataTransfer.files[0];
+                extractVersionFromFilename(file.name);
+                
+                const reader = new FileReader();
+                reader.onload = (evt) => parseAndLoadData(evt.target.result);
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        function parseAndLoadData(arrayBuffer) {
+            if (typeof XLSX === 'undefined') {
+                alert('Kunne ikke indlæse Excel-biblioteket. Tjek din internetforbindelse.');
+                return;
+            }
+            const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+            db.klasser = XLSX.utils.sheet_to_json(wb.Sheets['Klasser'] || []) || [];
+            db.attributter = XLSX.utils.sheet_to_json(wb.Sheets['Attributter'] || []) || [];
+            db.relationer = XLSX.utils.sheet_to_json(wb.Sheets['Relationer'] || []) || [];
+            db.vaerdilister = XLSX.utils.sheet_to_json(wb.Sheets['Værdilister'] || []) || [];
+            
+            document.getElementById('drop-zone').style.display = 'none';
+            
+            initFuseSearch();
+            renderSidebar();
+
+            if (window.location.hash) {
+                handleHashNavigation();
+            } else {
+                const first = document.querySelector('.package-item');
+                if (first) first.click();
+            }
+        }
+
+        function initFuseSearch() {
+            if (typeof Fuse === 'undefined') return;
+
+            const searchData = [];
+            db.klasser.forEach(k => {
+                searchData.push({ type: 'Klasse', pakke: k.Pakke || 'Uden Pakke', klasse: k.Klasse, text: k.Klasse, definition: k.Definition || '' });
+            });
+            db.attributter.forEach(a => {
+                searchData.push({ type: 'Attribut', pakke: a.Pakke || 'Uden Pakke', klasse: a.Klasse, text: a.Attribut, definition: a.Definition || '' });
+            });
+
+            const options = {
+                includeScore: true,
+                threshold: 0.3,
+                keys: [{ name: 'text', weight: 0.7 }, { name: 'pakke', weight: 0.2 }, { name: 'definition', weight: 0.1 }]
+            };
+            fuseIndex = new Fuse(searchData, options);
+        }
+
+        function setupAutocompleteContainer() {
+            const searchInput = document.getElementById('pkgSearch');
+            if (!searchInput) return;
+
+            const dropdown = document.createElement('div');
+            dropdown.id = 'autocompleteDropdown';
+            dropdown.style.cssText = `
+                position: absolute;
+                background: white;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+                max-height: 320px;
+                overflow-y: auto;
+                z-index: 1000;
+                display: none;
+                width: ${searchInput.offsetWidth}px;
+                margin-top: 4px;
+            `;
+            searchInput.parentNode.style.position = 'relative';
+            searchInput.parentNode.appendChild(dropdown);
+
+            document.addEventListener('click', (e) => {
+                if (!searchInput.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
+        }
+
+        function extractVersionFromFilename(filename) {
+            const versionMatch = filename.match(/v(\d+\.\d+\.\d+)/i);
+            const dateMatch = filename.match(/(\d{4})(\d{2})(\d{2})/);
+
+            let verText = 'v1.1.9';
+            if (versionMatch) verText = `v${versionMatch[1]}`;
+
+            let dateText = '';
+            if (dateMatch) dateText = ` (${dateMatch[3]}.${dateMatch[2]}.${dateMatch[1]})`;
+
+            document.getElementById('modelVersionBadge').innerText = verText;
+            document.getElementById('modelSubTitle').innerText = `SIS Informationsmodel${dateText}`;
+        }
+
+        function initNativeSvgPanZoom() {
+            const container = document.getElementById('diagram-container');
+
+            container.onmousedown = (e) => {
+                if (e.target.closest('.zoom-controls') || e.target.closest('.diagram-legend')) return;
+                isPanning = true;
+                startMouse = { x: e.clientX, y: e.clientY };
+                startVB = { x: activeVB.x, y: activeVB.y };
+                container.style.cursor = 'grabbing';
+            };
+
+            window.onmousemove = (e) => {
+                if (!isPanning) return;
+                const containerRect = container.getBoundingClientRect();
+                
+                const dx_px = e.clientX - startMouse.x;
+                const dy_px = e.clientY - startMouse.y;
+
+                const dx_vb = (dx_px / containerRect.width) * activeVB.w;
+                const dy_vb = (dy_px / containerRect.height) * activeVB.h;
+
+                activeVB.x = startVB.x - dx_vb;
+                activeVB.y = startVB.y - dy_vb;
+
+                updateSvgViewBox();
+            };
+
+            window.onmouseup = () => {
+                isPanning = false;
+                container.style.cursor = 'default';
+            };
+
+            container.onwheel = (e) => {
+                e.preventDefault();
+                const containerRect = container.getBoundingClientRect();
+
+                const mousePercentX = (e.clientX - containerRect.left) / containerRect.width;
+                const mousePercentY = (e.clientY - containerRect.top) / containerRect.height;
+
+                const mouseSvgX = activeVB.x + mousePercentX * activeVB.w;
+                const mouseSvgY = activeVB.y + mousePercentY * activeVB.h;
+
+                const factor = e.deltaY < 0 ? 0.85 : 1.15;
+                const newW = activeVB.w * factor;
+                const newH = activeVB.h * factor;
+
+                activeVB.x = mouseSvgX - mousePercentX * newW;
+                activeVB.y = mouseSvgY - mousePercentY * newH;
+                activeVB.w = newW;
+                activeVB.h = newH;
+
+                updateSvgViewBox();
+            };
+        }
+
+        function updateSvgViewBox() {
+            const svg = document.querySelector('#mermaidTarget svg');
+            if (svg) {
+                svg.setAttribute('viewBox', `${activeVB.x} ${activeVB.y} ${activeVB.w} ${activeVB.h}`);
+            }
+        }
+
+        function renderSidebar() {
+            const pkgs = {};
+            db.klasser.forEach(k => {
+                const p = k.Pakke || 'Uden Pakke';
+                pkgs[p] = (pkgs[p] || 0) + 1;
+            });
+
+            const list = document.getElementById('pkgList');
+            list.innerHTML = '';
+            Object.keys(pkgs).sort().forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'package-item';
+                div.setAttribute('data-pkg', p);
+                div.innerHTML = `<span>${p}</span><strong>${pkgs[p]}</strong>`;
+                div.onclick = () => {
+                    selectPkg(p, div);
+                    history.replaceState(null, '', `#${encodeURIComponent(p)}`);
+                };
+                list.appendChild(div);
+            });
+        }
+
+        function filterPkgs() {
+            const q = document.getElementById('pkgSearch').value.trim().toLowerCase();
+            const dropdown = document.getElementById('autocompleteDropdown');
+
+            document.querySelectorAll('.package-item').forEach(el => {
+                const pName = el.getAttribute('data-pkg') || el.querySelector('span')?.innerText || '';
+                el.style.display = pName.toLowerCase().includes(q) ? 'flex' : 'none';
+            });
+
+            if (!q || q.length < 2) {
+                if (dropdown) dropdown.style.display = 'none';
+                return;
+            }
+
+            if (!fuseIndex || !dropdown) return;
+
+            const results = fuseIndex.search(q);
+            dropdown.innerHTML = '';
+
+            if (results.length === 0) {
+                dropdown.style.display = 'none';
+                return;
+            }
+
+            const seen = new Set();
+            let count = 0;
+
+            results.forEach(res => {
+                if (count >= 15) return;
+                const item = res.item;
+                const uniqueKey = `${item.pakke}::${item.klasse}::${item.text}`;
+                if (seen.has(uniqueKey)) return;
+                seen.add(uniqueKey);
+                count++;
+
+                const div = document.createElement('div');
+                div.style.cssText = `
+                    padding: 8px 12px;
+                    cursor: pointer;
+                    border-bottom: 1px solid #f1f5f9;
+                    font-size: 0.85rem;
+                `;
+                div.onmouseover = () => div.style.background = '#f8fafc';
+                div.onmouseout = () => div.style.background = 'white';
+
+                const isAttr = item.type === 'Attribut';
+                const badgeColor = isAttr ? '#0ea5e9' : '#10b981';
+                
+                div.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight: 600; color: #0f172a;">${item.text}</span>
+                        <span style="font-size:0.7rem; background:${badgeColor}; color:white; padding:1px 5px; border-radius:4px;">${item.type}</span>
+                    </div>
+                    <div style="font-size: 0.75rem; color: #64748b; margin-top:2px;">
+                        ${isAttr ? `Klasse: <strong>${item.klasse}</strong> | ` : ''}Pakke: ${item.pakke}
+                    </div>
+                `;
+
+                div.onclick = () => {
+                    dropdown.style.display = 'none';
+                    document.getElementById('pkgSearch').value = item.text;
+
+                    const pkgItem = Array.from(document.querySelectorAll('.package-item'))
+                        .find(el => el.getAttribute('data-pkg') === item.pakke.trim());
+
+                    if (pkgItem) {
+                        selectPkg(item.pakke, pkgItem, () => {
+                            if (item.type === 'Attribut') {
+                                // Hvis det er en attribut, find klassen og åbn dens detaljer
+                                const matchClass = db.klasser.find(k => k.Klasse === item.klasse);
+                                if (matchClass) showDetails(matchClass, item.pakke);
+                            } else {
+                                // Hvis det er en klasse, åbn dens detaljer
+                                const matchClass = db.klasser.find(k => k.Klasse === item.klasse);
+                                if (matchClass) showDetails(matchClass, item.pakke);
+                            }
+                        });
+                    }
+                };
+
+                dropdown.appendChild(div);
+            });
+
+            dropdown.style.display = 'block';
+        }
+
+        function sanitizeId(str) {
+            if (!str) return '';
+            return String(str).replace(/[^a-zA-Z0-9_æøåÆØÅ]/g, '_');
+        }
+
+        function sanitizeLabel(str) {
+            if (!str || String(str).toLowerCase() === 'nan') return '';
+            return String(str).replace(/"/g, "'").replace(/[\r\n]+/g, ' ').trim();
+        }
+
+        async function selectPkg(pkgName, element, afterRenderCallback = null) {
+            document.querySelectorAll('.package-item').forEach(el => el.classList.remove('active'));
+            if (element) element.classList.add('active');
+
+            document.getElementById('pkgTitle').innerText = pkgName;
+            closeDetails();
+
+            const pkgClasses = db.klasser.filter(k => k.Pakke === pkgName);
+            const classNames = new Set(pkgClasses.map(k => k.Klasse));
+
+            document.getElementById('statInfo').innerText = `${classNames.size} klasser i pakken`;
+
+            const pkgRelations = db.relationer.filter(r => classNames.has(r.Klasse1) || classNames.has(r.Klasse2));
+            const enumNames = new Set(db.vaerdilister.map(v => v.Værdiliste));
+
+            let code = 'classDiagram\n';
+            const styledClasses = [];
+
+            pkgClasses.forEach(k => {
+                const kName = k.Klasse;
+                const cId = sanitizeId(kName);
+                const cLabel = sanitizeLabel(kName);
+
+                const isEnum = enumNames.has(kName) || kName.endsWith('Enum');
+                const note = String(k.Anvendelsesnote || '').toLowerCase();
+                const model = String(k.Model || '').toLowerCase();
+
+                let styleClass = 'localStyle';
+                if (isEnum) {
+                    styleClass = 'enumStyle';
+                } else if (model === 'dkuni' || note.includes('http') || note.includes('lån') || note.includes('oio') || note.includes('datafordeler')) {
+                    styleClass = 'borrowedStyle';
+                }
+                styledClasses.push({ id: cId, style: styleClass });
+
+                const attrs = db.attributter.filter(a => a.Klasse === kName && a.Pakke === pkgName);
+                
+                if (isEnum) {
+                    code += `  class ${cId}["${cLabel}"] {\n    <<enumeration>>\n`;
+                    attrs.forEach(a => { const ac = sanitizeLabel(a.Attribut); if(ac) code += `    ${ac}\n`; });
+                    code += `  }\n`;
+                } else if (attrs.length > 0) {
+                    code += `  class ${cId}["${cLabel}"] {\n`;
+                    attrs.forEach(a => { const ac = sanitizeLabel(a.Attribut); if(ac) code += `    +${ac}\n`; });
+                    code += `  }\n`;
+                } else {
+                    code += `  class ${cId}["${cLabel}"]\n`;
+                }
+            });
+
+            pkgRelations.forEach(r => {
+                if (!r.Klasse1 || !r.Klasse2) return;
+                const k1 = sanitizeId(r.Klasse1);
+                const k2 = sanitizeId(r.Klasse2);
+                if (!k1 || !k2) return;
+
+                const c1 = r.Kardinalitet1 ? `"${sanitizeLabel(r.Kardinalitet1)}"` : '';
+                const c2 = r.Kardinalitet2 ? `"${sanitizeLabel(r.Kardinalitet2)}"` : '';
+                const lbl = r.Relation ? ` : ${sanitizeLabel(r.Relation)}` : '';
+
+                if (r.Type === 'Generalization') {
+                    code += `  ${k1} --|> ${k2}\n`;
+                } else if (r.Type === 'Dependency') {
+                    code += `  ${k1} ..> ${k2}\n`;
+                } else {
+                    code += `  ${k1} ${c1} -- ${c2} ${k2}${lbl}\n`;
+                }
+            });
+
+            styledClasses.forEach(item => {
+                code += `  cssClass "${item.id}" ${item.style}\n`;
+            });
+
+            const target = document.getElementById('mermaidTarget');
+            target.removeAttribute('data-processed');
+            target.innerHTML = `<div class="mermaid" id="diag_active">${code}</div>`;
+
+            try {
+                if (typeof mermaid.run === 'function') {
+                    await mermaid.run({ nodes: [document.getElementById('diag_active')] });
+                } else if (typeof mermaid.init === 'function') {
+                    mermaid.init(undefined, '#diag_active');
+                }
+
+                const svg = document.querySelector('#mermaidTarget svg');
+                if (svg) {
+                    const attr = svg.getAttribute('viewBox');
+                    if (attr) {
+                        const parts = attr.split(/[\s,]+/).map(Number);
+                        if (parts.length === 4 && parts[2] > 0) {
+                            origVB = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+                            activeVB = { ...origVB };
+                        }
+                    }
+                }
+
+                document.querySelectorAll('.node, .classGroup').forEach(node => {
+                    node.style.cursor = 'pointer';
+                    node.onclick = (e) => {
+                        e.stopPropagation();
+                        const text = (node.textContent || '').trim();
+                        let match = db.klasser.find(k => text === k.Klasse || text === sanitizeId(k.Klasse));
+                        if (!match) {
+                            const candidates = db.klasser.filter(k => text.includes(k.Klasse) || text.includes(sanitizeId(k.Klasse)));
+                            if (candidates.length > 0) {
+                                candidates.sort((a, b) => b.Klasse.length - a.Klasse.length);
+                                match = candidates[0];
+                            }
+                        }
+                        if (match) {
+                            showDetails(match, match.Pakke || pkgName);
+                        }
+                    };
+                });
+
+                resetZoom();
+
+                if (typeof afterRenderCallback === 'function') {
+                    afterRenderCallback();
+                }
+
+            } catch(err) {
+                console.error("Mermaid init error:", err);
+            }
+        }
+
+        function handleHashNavigation() {
+            if (!window.location.hash) return;
+
+            const hashText = decodeURIComponent(window.location.hash.substring(1));
+            const parts = hashText.split('/');
+            const pkgName = parts[0];
+            const className = parts[1];
+
+            if (pkgName) {
+                const pkgItem = Array.from(document.querySelectorAll('.package-item'))
+                    .find(el => el.getAttribute('data-pkg') === pkgName.trim() || el.querySelector('span')?.innerText.trim() === pkgName.trim());
+
+                if (pkgItem) {
+                    selectPkg(pkgName, pkgItem, () => {
+                        if (className) {
+                            const matchClass = db.klasser.find(k => k.Klasse === className || sanitizeId(k.Klasse) === sanitizeId(className));
+                            if (matchClass) {
+                                showDetails(matchClass, pkgName);
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        function zoomIn() {
+            const container = document.getElementById('diagram-container');
+            const rect = container.getBoundingClientRect();
+            zoomAtPoint(rect.width / 2, rect.height / 2, 0.8);
+        }
+
+        function zoomOut() {
+            const container = document.getElementById('diagram-container');
+            const rect = container.getBoundingClientRect();
+            zoomAtPoint(rect.width / 2, rect.height / 2, 1.25);
+        }
+
+        function zoomAtPoint(cx_px, cy_px, factor) {
+            const container = document.getElementById('diagram-container');
+            const rect = container.getBoundingClientRect();
+
+            const mousePercentX = cx_px / rect.width;
+            const mousePercentY = cy_px / rect.height;
+
+            const mouseSvgX = activeVB.x + mousePercentX * activeVB.w;
+            const mouseSvgY = activeVB.y + mousePercentY * activeVB.h;
+
+            const newW = activeVB.w * factor;
+            const newH = activeVB.h * factor;
+
+            activeVB.x = mouseSvgX - mousePercentX * newW;
+            activeVB.y = mouseSvgY - mousePercentY * newH;
+            activeVB.w = newW;
+            activeVB.h = newH;
+
+            updateSvgViewBox();
+        }
+
+        function resetZoom() {
+            activeVB = { ...origVB };
+            updateSvgViewBox();
+        }
+
+        function showDetails(klasse, pkgName) {
+            const newHash = `#${encodeURIComponent(pkgName)}/${encodeURIComponent(klasse.Klasse)}`;
+            history.replaceState(null, '', newHash);
+
+            document.getElementById('detTitle').innerText = klasse.Klasse;
+            
+            const attrs = db.attributter.filter(a => a.Klasse === klasse.Klasse);
+            const rels = db.relationer.filter(r => r.Klasse1 === klasse.Klasse || r.Klasse2 === klasse.Klasse);
+
+            let html = `
+                <div class="meta-group">
+                    <h4>Pakke</h4>
+                    <p>${klasse.Pakke || pkgName}</p>
+                </div>
+                <div class="meta-group">
+                    <h4>Definition</h4>
+                    <p>${klasse.Definition || '<em>Ingen definition angivet</em>'}</p>
+                </div>
+            `;
+
+            if (klasse.Forklaring) html += `<div class="meta-group"><h4>Forklaring</h4><p>${klasse.Forklaring}</p></div>`;
+            if (klasse.Anvendelsesnote) html += `<div class="meta-group"><h4>Anvendelsesnote</h4><p>${klasse.Anvendelsesnote}</p></div>`;
+
+            if (rels.length > 0) {
+                html += `<div class="meta-group"><h4>Relationer & Kardinaliteter (${rels.length})</h4><div class="rel-list">`;
+                rels.forEach(r => {
+                    const c1 = r.Kardinalitet1 ? `(${r.Kardinalitet1})` : '';
+                    const c2 = r.Kardinalitet2 ? `(${r.Kardinalitet2})` : '';
+                    const relName = r.Relation ? ` → <em>${r.Relation}</em> →` : ' →';
+                    html += `<div class="rel-item"><strong>${r.Klasse1}</strong> ${c1} ${relName} <strong>${r.Klasse2}</strong> ${c2}</div>`;
+                });
+                html += `</div></div>`;
+            }
+
+            if (attrs.length > 0) {
+                html += `<div class="meta-group"><h4>Attributter (${attrs.length})</h4>`;
+                attrs.forEach(a => {
+                    html += `<p style="margin-bottom:0.5rem; border-bottom:1px solid #f1f5f9; padding-bottom:0.25rem;"><strong>${a.Attribut}</strong> <span style="color:var(--text-muted); font-size:0.75rem;">${a['Antal værdier'] || ''}</span><br>${a.Definition || a.Anvendelsesnote || ''}</p>`;
+                });
+                html += `</div>`;
+            }
+
+            document.getElementById('detContent').innerHTML = html;
+            document.getElementById('details-panel').classList.add('open');
+        }
+
+        function closeDetails() {
+            document.getElementById('details-panel').classList.remove('open');
+            if (window.location.hash.includes('/')) {
+                const pkgOnly = window.location.hash.split('/')[0];
+                history.replaceState(null, '', pkgOnly);
+            }
+            resetZoom();
+        }
+    </script>
+
+</body>
+</html>
