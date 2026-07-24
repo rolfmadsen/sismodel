@@ -236,18 +236,36 @@
 
     <div id="main-content">
         <div class="top-bar">
-            <h2 id="pkgTitle">Vælg en pakke</h2>
+            <h2 id="pkgTitle">Oversigt</h2>
             <div id="statInfo" style="font-size:0.85rem; color:var(--text-muted);"></div>
         </div>
         <div class="workspace">
             <div id="diagram-container">
-                <div class="diagram-legend">
+                <!-- NY FORSIDE -->
+                <div id="welcome-view" style="padding: 3rem; max-width: 800px; margin: 0 auto; color: var(--text-main);">
+                    <h2 style="font-size: 1.8rem; margin-bottom: 1rem; color: var(--accent);">Velkommen til SIS Informationsmodel</h2>
+                    <p style="font-size: 1rem; line-height: 1.6; color: var(--text-muted); margin-bottom: 1.5rem;">
+                        Denne webviewer giver et interaktivt overblik over SIS-informationsmodellen for videregående uddannelser. 
+                        Brug menuen til venstre til at navigere imellem de forskellige pakker, eller benyt søgefeltet øverst til hurtigt at finde specifikke klasser og attributter.
+                    </p>
+                    <div style="background: #ffffff; border: 1px solid var(--border-color); padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                        <h3 style="font-size: 1.1rem; margin-bottom: 0.75rem; color: #0f172a;">Sådan bruger du siden:</h3>
+                        <ul style="padding-left: 1.5rem; line-height: 1.6; font-size: 0.95rem; color: #334155;">
+                            <li><strong>Vælg en pakke</strong> i venstre kolonne for at indlæse klasse- og relationsdiagrammet.</li>
+                            <li><strong>Klik på en boks</strong> i diagrammet for at se detaljer, definitioner og attributter i højre panel.</li>
+                            <li><strong>Brug søgefeltet</strong> til at fremsøge elementer på tværs af hele modellen.</li>
+                        </ul>
+                    </div>
+                </div>
+    
+                <!-- Eksisterende elementer -->
+                <div class="diagram-legend" id="diagramLegend" style="display: none;">
                     <div class="legend-item"><div class="legend-box box-blue"></div> Fremmed / Fællesbegreb</div>
                     <div class="legend-item"><div class="legend-box box-green"></div> Enumeration («enumeration»)</div>
                     <div class="legend-item"><div class="legend-box box-cream"></div> Lokalt begreb</div>
                 </div>
                 <div id="mermaidTarget"></div>
-                <div class="zoom-controls">
+                <div class="zoom-controls" id="zoomControls" style="display: none;">
                     <button class="zoom-btn" onclick="zoomIn()">+</button>
                     <button class="zoom-btn" onclick="zoomOut()">-</button>
                     <button class="zoom-btn" onclick="resetZoom()">⟲</button>
