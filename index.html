@@ -335,6 +335,13 @@
             // Ryd URL hash
             history.replaceState(null, '', window.location.pathname);
             
+            // Ryd søgefelt og nulstil pakkeliste
+            const searchInput = document.getElementById('pkgSearch');
+            if (searchInput) {
+                searchInput.value = '';
+                filterPkgs();
+            }
+
             // Fjern aktiv markering fra pakker i menuen
             document.querySelectorAll('.package-item').forEach(el => el.classList.remove('active'));
             
@@ -374,7 +381,11 @@
             db.klasser = XLSX.utils.sheet_to_json(wb.Sheets['Klasser'] || []) || [];
             db.attributter = XLSX.utils.sheet_to_json(wb.Sheets['Attributter'] || []) || [];
             db.relationer = XLSX.utils.sheet_to_json(wb.Sheets['Relationer'] || []) || [];
-            db.vaerdilister = XLSX.utils.sheet_to_json(wb.Sheets['Værdilister'] || []) || [];
+            db.vaerdilister = XLSX.utils.sheet_to_json(
+                wb.Sheets['VærdilisteVærdier'] || 
+                wb.Sheets['Værdilisteværdier'] || 
+                wb.Sheets['Værdilister'] || []
+            ) || [];
             
             document.getElementById('drop-zone').style.display = 'none';
             
@@ -542,13 +553,74 @@
             });
         }
 
+        function getPackagesMatchingQuery(q) {
+            if (!q) return null;
+            const searchLow = q.toLowerCase().trim();
+            if (!searchLow) return null;
+
+            const matchedPkgNames = new Set();
+
+            // 1. Direct package name match
+            db.klasser.forEach(k => {
+                if (k.Pakke && k.Pakke.toLowerCase().includes(searchLow)) {
+                    matchedPkgNames.add(k.Pakke.trim());
+                }
+            });
+
+            // 2. Class name match
+            db.klasser.forEach(k => {
+                if (k.Klasse && k.Klasse.toLowerCase().includes(searchLow)) {
+                    if (k.Pakke) matchedPkgNames.add(k.Pakke.trim());
+                }
+            });
+
+            // 3. Enum name / value match
+            db.vaerdilister.forEach(v => {
+                const vName = v.Værdiliste || '';
+                const valName = v.Værdi || v.Værdinavn || v.Kode || v.Navn || v.Attribut || '';
+                if (vName.toLowerCase().includes(searchLow) || valName.toLowerCase().includes(searchLow)) {
+                    if (v.Pakke) matchedPkgNames.add(v.Pakke.trim());
+                }
+            });
+
+            // 4. Attribute match or Attribute datatype reference
+            db.attributter.forEach(a => {
+                const attrName = a.Attribut || '';
+                const dt = a.Datatype || a.Type || a.Værdiliste || a.Domæne || '';
+                if (attrName.toLowerCase().includes(searchLow) || dt.toLowerCase().includes(searchLow)) {
+                    if (a.Pakke) matchedPkgNames.add(a.Pakke.trim());
+                    const cls = db.klasser.find(k => k.Klasse === a.Klasse);
+                    if (cls?.Pakke) matchedPkgNames.add(cls.Pakke.trim());
+                }
+            });
+
+            // 5. Relation match
+            db.relationer.forEach(r => {
+                const k1 = r.Klasse1 || '';
+                const k2 = r.Klasse2 || '';
+                if (k1.toLowerCase().includes(searchLow) || k2.toLowerCase().includes(searchLow)) {
+                    const cls1 = db.klasser.find(k => k.Klasse === k1);
+                    if (cls1?.Pakke) matchedPkgNames.add(cls1.Pakke.trim());
+                    const cls2 = db.klasser.find(k => k.Klasse === k2);
+                    if (cls2?.Pakke) matchedPkgNames.add(cls2.Pakke.trim());
+                }
+            });
+
+            return matchedPkgNames;
+        }
+
         function filterPkgs() {
-            const q = document.getElementById('pkgSearch').value.trim().toLowerCase();
+            const q = document.getElementById('pkgSearch').value.trim();
             const dropdown = document.getElementById('autocompleteDropdown');
+            const matchingPkgs = getPackagesMatchingQuery(q);
 
             document.querySelectorAll('.package-item').forEach(el => {
-                const pName = el.getAttribute('data-pkg') || el.querySelector('span')?.innerText || '';
-                el.style.display = pName.toLowerCase().includes(q) ? 'flex' : 'none';
+                const pName = (el.getAttribute('data-pkg') || el.querySelector('span')?.innerText || '').trim();
+                if (!matchingPkgs) {
+                    el.style.display = 'flex';
+                } else {
+                    el.style.display = matchingPkgs.has(pName) ? 'flex' : 'none';
+                }
             });
 
             if (!q || q.length < 2) {
@@ -610,11 +682,9 @@
                     if (pkgItem) {
                         selectPkg(item.pakke, pkgItem, () => {
                             if (item.type === 'Attribut') {
-                                // Hvis det er en attribut, find klassen og åbn dens detaljer
                                 const matchClass = db.klasser.find(k => k.Klasse === item.klasse);
                                 if (matchClass) showDetails(matchClass, item.pakke);
                             } else {
-                                // Hvis det er en klasse, åbn dens detaljer
                                 const matchClass = db.klasser.find(k => k.Klasse === item.klasse);
                                 if (matchClass) showDetails(matchClass, item.pakke);
                             }
@@ -638,6 +708,112 @@
             return String(str).replace(/"/g, "'").replace(/[\r\n]+/g, ' ').trim();
         }
 
+        function sanitizeMemberName(str) {
+            if (!str || String(str).toLowerCase() === 'nan') return '';
+            let s = String(str).replace(/["'\r\n]/g, '').trim();
+            s = s.replace(/[^a-zA-Z0-9_æøåÆØÅ\-]/g, '_');
+            s = s.replace(/_+/g, '_').replace(/^_|_$/g, '');
+            return s;
+        }
+
+        function getAttrDatatype(a) {
+            if (!a) return '';
+            
+            const candidateKeys = [
+                'Datatype', 'Data type', 'Værdisæt', 'Værditype', 'Attributtype', 
+                'Type', 'Værdiliste', 'Værdilistenavn', 'Domæne', 'Format', 
+                'RefereretType', 'Reference', 'Stereotype'
+            ];
+            
+            let found = '';
+            for (const ck of candidateKeys) {
+                const val = a[ck];
+                if (val && String(val).trim() && String(val).toLowerCase() !== 'nan') {
+                    found = String(val).trim();
+                    break;
+                }
+            }
+
+            if (!found || ['enumeration', 'attribut', 'attribute', 'property'].includes(found.toLowerCase())) {
+                const attrName = String(a.Attribut || '').trim();
+                if (attrName) {
+                    const allEnumNames = Array.from(new Set(db.vaerdilister.map(v => v.Værdiliste).filter(Boolean)));
+                    const matchEnum = allEnumNames.find(e => 
+                        e.toLowerCase() === attrName.toLowerCase() || 
+                        e.toLowerCase() === (attrName + 'enum').toLowerCase() ||
+                        e.toLowerCase().includes(attrName.toLowerCase())
+                    );
+                    if (matchEnum) {
+                        return matchEnum;
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        function getEnumValues(enumName) {
+            if (!enumName) return [];
+            const eName = String(enumName).trim();
+            const list = db.vaerdilister.filter(v => 
+                v.Værdiliste === eName || 
+                v.Værdilistenavn === eName || 
+                v.Klasse === eName ||
+                sanitizeId(v.Værdiliste || v.Værdilistenavn || v.Klasse) === sanitizeId(eName)
+            );
+            
+            const metaKeys = new Set([
+                'pakke', 'definition', 'beskrivelse', 'forklaring', 'anvendelsesnote', 
+                'værdiliste', 'værdilistenavn', 'model', 'kilde', 'stereotype', 'kommentar'
+            ]);
+
+            if (list.length > 0) {
+                console.log(`[SIS Model DEBUG] getEnumValues for '${eName}':`, list);
+                return list.map(v => {
+                    let valName = '';
+                    
+                    const exactValue = v.VærdilisteVærdi || v.VærdilisteVærdier || v.Værdilisteværdi || v.Værdilisteværdier || '';
+                    const nameVal = exactValue || v.Værdinavn || v.Værdilistetekst || v.Navn || v.Tekst || v.Titel || v.Værdielement || '';
+                    const rawVal = v.Værdi || v.Attribut || '';
+                    const codeVal = v.Kode || v.Værdikode || v.Kodenavn || '';
+                    const def = v.Definition || v.Beskrivelse || v.Forklaring || v.Anvendelsesnote || '';
+
+                    if (nameVal && String(nameVal).trim() !== eName && sanitizeId(nameVal) !== sanitizeId(eName)) {
+                        valName = String(nameVal).trim();
+                    } else if (rawVal && String(rawVal).trim() !== eName && sanitizeId(rawVal) !== sanitizeId(eName)) {
+                        valName = String(rawVal).trim();
+                    } else if (codeVal && String(codeVal).trim() !== eName && sanitizeId(codeVal) !== sanitizeId(eName)) {
+                        valName = String(codeVal).trim();
+                    } else {
+                        for (const key of Object.keys(v)) {
+                            const lowKey = key.toLowerCase().trim();
+                            if (metaKeys.has(lowKey)) continue;
+                            const val = String(v[key] || '').trim();
+                            if (val && val !== eName && sanitizeId(val) !== sanitizeId(eName)) {
+                                valName = val;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (valName && def && (valName.length <= 5 || /^[A-Z0-9_\-]+$/i.test(valName))) {
+                        const shortDef = String(def).split(/[\n\.\r]/)[0].trim();
+                        if (shortDef && !shortDef.toLowerCase().includes(valName.toLowerCase()) && shortDef.length <= 45) {
+                            valName = `${valName} (${shortDef})`;
+                        }
+                    }
+
+                    return { name: valName, definition: String(def).trim() };
+                }).filter(item => item.name && item.name !== eName && sanitizeId(item.name) !== sanitizeId(eName));
+            }
+            
+            const attrs = db.attributter.filter(a => a.Klasse === eName);
+            return attrs.map(a => ({
+                name: String(a.Attribut).trim(),
+                definition: String(a.Definition || a.Anvendelsesnote || '').trim()
+            })).filter(item => item.name && item.name !== eName && sanitizeId(item.name) !== sanitizeId(eName));
+        }
+
         async function selectPkg(pkgName, element, afterRenderCallback = null) {
             document.querySelectorAll('.package-item').forEach(el => el.classList.remove('active'));
             if (element) element.classList.add('active');
@@ -648,23 +824,70 @@
             document.getElementById('pkgTitle').innerText = pkgName;
             closeDetails();
 
-            const pkgClasses = db.klasser.filter(k => k.Pakke === pkgName);
+            const allEnumNames = new Set(db.vaerdilister.map(v => v.Værdiliste).filter(Boolean));
+
+            const rawPkgClasses = db.klasser.filter(k => k.Pakke === pkgName);
+            const regClasses = rawPkgClasses.filter(k => {
+                const isE = allEnumNames.has(k.Klasse) || k.Klasse.endsWith('Enum') || String(k.Stereotype).includes('enumeration');
+                return !isE;
+            });
+            const hasRegClasses = regClasses.length > 0;
+
+            const regClassNames = new Set(regClasses.map(k => k.Klasse));
+            const referencedEnumNames = new Set();
+
+            db.attributter.filter(a => regClassNames.has(a.Klasse)).forEach(a => {
+                const dt = getAttrDatatype(a);
+                if (dt && allEnumNames.has(dt)) {
+                    referencedEnumNames.add(dt);
+                }
+            });
+
+            const pkgRelations = db.relationer.filter(r => regClassNames.has(r.Klasse1) || regClassNames.has(r.Klasse2));
+            pkgRelations.forEach(r => {
+                if (allEnumNames.has(r.Klasse1)) referencedEnumNames.add(r.Klasse1);
+                if (allEnumNames.has(r.Klasse2)) referencedEnumNames.add(r.Klasse2);
+            });
+
+            const pkgClasses = [];
+            regClasses.forEach(k => pkgClasses.push(k));
+
+            rawPkgClasses.forEach(k => {
+                const isE = allEnumNames.has(k.Klasse) || k.Klasse.endsWith('Enum') || String(k.Stereotype).includes('enumeration');
+                if (isE) {
+                    if (!hasRegClasses || referencedEnumNames.has(k.Klasse)) {
+                        pkgClasses.push(k);
+                    }
+                }
+            });
+
+            referencedEnumNames.forEach(enumName => {
+                if (!pkgClasses.some(k => k.Klasse === enumName)) {
+                    const matchInDb = db.klasser.find(k => k.Klasse === enumName);
+                    if (matchInDb) {
+                        pkgClasses.push(matchInDb);
+                    } else {
+                        const enumItem = db.vaerdilister.find(v => v.Værdiliste === enumName);
+                        pkgClasses.push({
+                            Klasse: enumName,
+                            Pakke: enumItem?.Pakke || 'Fælles',
+                            Definition: 'Enumeration / Værdiliste'
+                        });
+                    }
+                }
+            });
+
             const classNames = new Set(pkgClasses.map(k => k.Klasse));
-
-            document.getElementById('statInfo').innerText = `${classNames.size} klasser i pakken`;
-
-            const pkgRelations = db.relationer.filter(r => classNames.has(r.Klasse1) || classNames.has(r.Klasse2));
-            const enumNames = new Set(db.vaerdilister.map(v => v.Værdiliste));
+            document.getElementById('statInfo').innerText = `${classNames.size} klasser og enumerationer i pakken`;
 
             let code = 'classDiagram\n';
-            const styledClasses = [];
 
             pkgClasses.forEach(k => {
                 const kName = k.Klasse;
                 const cId = sanitizeId(kName);
                 const cLabel = sanitizeLabel(kName);
 
-                const isEnum = enumNames.has(kName) || kName.endsWith('Enum');
+                const isEnum = allEnumNames.has(kName) || kName.endsWith('Enum') || String(k.Stereotype).includes('enumeration');
                 const note = String(k.Anvendelsesnote || '').toLowerCase();
                 const model = String(k.Model || '').toLowerCase();
 
@@ -674,20 +897,44 @@
                 } else if (model === 'dkuni' || note.includes('http') || note.includes('lån') || note.includes('oio') || note.includes('datafordeler')) {
                     styleClass = 'borrowedStyle';
                 }
-                styledClasses.push({ id: cId, style: styleClass });
 
-                const attrs = db.attributter.filter(a => a.Klasse === kName && a.Pakke === pkgName);
-                
                 if (isEnum) {
-                    code += `  class ${cId}["${cLabel}"] {\n    <<enumeration>>\n`;
-                    attrs.forEach(a => { const ac = sanitizeLabel(a.Attribut); if(ac) code += `    ${ac}\n`; });
-                    code += `  }\n`;
-                } else if (attrs.length > 0) {
-                    code += `  class ${cId}["${cLabel}"] {\n`;
-                    attrs.forEach(a => { const ac = sanitizeLabel(a.Attribut); if(ac) code += `    +${ac}\n`; });
+                    code += `  class ${cId}["${cLabel}"]:::${styleClass} {\n    &lt;&lt;enumeration&gt;&gt;\n`;
+                    const enumVals = getEnumValues(kName);
+                    const maxShown = 15;
+                    const shownVals = enumVals.slice(0, maxShown);
+                    const seen = new Set();
+                    shownVals.forEach(v => {
+                        const ac = sanitizeMemberName(v.name);
+                        if (ac && !seen.has(ac)) {
+                            seen.add(ac);
+                            code += `    ${ac}\n`;
+                        }
+                    });
+                    if (enumVals.length > maxShown) {
+                        code += `    etc_${enumVals.length - maxShown}_flere\n`;
+                    }
                     code += `  }\n`;
                 } else {
-                    code += `  class ${cId}["${cLabel}"]\n`;
+                    const attrs = db.attributter.filter(a => a.Klasse === kName && (a.Pakke === pkgName || !a.Pakke));
+                    if (attrs.length > 0) {
+                        code += `  class ${cId}["${cLabel}"]:::${styleClass} {\n`;
+                        attrs.forEach(a => {
+                            const ac = sanitizeMemberName(a.Attribut);
+                            const dtRaw = getAttrDatatype(a);
+                            const dt = dtRaw ? sanitizeMemberName(dtRaw) : '';
+                            if (ac) {
+                                if (dt) {
+                                    code += `    +${ac} : ${dt}\n`;
+                                } else {
+                                    code += `    +${ac}\n`;
+                                }
+                            }
+                        });
+                        code += `  }\n`;
+                    } else {
+                        code += `  class ${cId}["${cLabel}"]:::${styleClass}\n`;
+                    }
                 }
             });
 
@@ -697,21 +944,24 @@
                 const k2 = sanitizeId(r.Klasse2);
                 if (!k1 || !k2) return;
 
-                const c1 = r.Kardinalitet1 ? `"${sanitizeLabel(r.Kardinalitet1)}"` : '';
-                const c2 = r.Kardinalitet2 ? `"${sanitizeLabel(r.Kardinalitet2)}"` : '';
-                const lbl = r.Relation ? ` : ${sanitizeLabel(r.Relation)}` : '';
+                const c1Str = r.Kardinalitet1 ? `"${sanitizeLabel(r.Kardinalitet1)}"` : '';
+                const c2Str = r.Kardinalitet2 ? `"${sanitizeLabel(r.Kardinalitet2)}"` : '';
+                let relStr = sanitizeLabel(r.Relation || '');
+                if (relStr) relStr = relStr.replace(/[^a-zA-Z0-9_æøåÆØÅ\-\s]/g, '');
+                const lbl = relStr ? ` : ${relStr}` : '';
 
                 if (r.Type === 'Generalization') {
                     code += `  ${k1} --|> ${k2}\n`;
                 } else if (r.Type === 'Dependency') {
                     code += `  ${k1} ..> ${k2}\n`;
                 } else {
-                    code += `  ${k1} ${c1} -- ${c2} ${k2}${lbl}\n`;
+                    const lineParts = [k1];
+                    if (c1Str) lineParts.push(c1Str);
+                    lineParts.push('--');
+                    if (c2Str) lineParts.push(c2Str);
+                    lineParts.push(k2 + lbl);
+                    code += `  ${lineParts.join(' ')}\n`;
                 }
-            });
-
-            styledClasses.forEach(item => {
-                code += `  cssClass "${item.id}" ${item.style}\n`;
             });
 
             const target = document.getElementById('mermaidTarget');
@@ -750,6 +1000,12 @@
                                 match = candidates[0];
                             }
                         }
+                        if (!match) {
+                            const enumItem = db.vaerdilister.find(v => text.includes(v.Værdiliste) || text.includes(sanitizeId(v.Værdiliste)));
+                            if (enumItem) {
+                                match = { Klasse: enumItem.Værdiliste, Pakke: enumItem.Pakke || pkgName, Definition: 'Enumeration / Værdiliste' };
+                            }
+                        }
                         if (match) {
                             showDetails(match, match.Pakke || pkgName);
                         }
@@ -763,7 +1019,7 @@
                 }
 
             } catch(err) {
-                console.error("Mermaid init error:", err);
+                console.error("Mermaid init error:", err, "\nGenerated code was:\n", code);
             }
         }
 
@@ -782,7 +1038,13 @@
                 if (pkgItem) {
                     selectPkg(pkgName, pkgItem, () => {
                         if (className) {
-                            const matchClass = db.klasser.find(k => k.Klasse === className || sanitizeId(k.Klasse) === sanitizeId(className));
+                            let matchClass = db.klasser.find(k => k.Klasse === className || sanitizeId(k.Klasse) === sanitizeId(className));
+                            if (!matchClass) {
+                                const enumItem = db.vaerdilister.find(v => v.Værdiliste === className || sanitizeId(v.Værdiliste) === sanitizeId(className));
+                                if (enumItem) {
+                                    matchClass = { Klasse: enumItem.Værdiliste, Pakke: enumItem.Pakke || pkgName, Definition: 'Enumeration / Værdiliste' };
+                                }
+                            }
                             if (matchClass) {
                                 showDetails(matchClass, pkgName);
                             }
@@ -835,8 +1097,16 @@
             history.replaceState(null, '', newHash);
 
             document.getElementById('detTitle').innerText = klasse.Klasse;
+
+            const searchInput = document.getElementById('pkgSearch');
+            if (searchInput) {
+                searchInput.value = klasse.Klasse;
+                filterPkgs();
+            }
             
+            const isEnum = (db.vaerdilister.some(v => v.Værdiliste === klasse.Klasse)) || klasse.Klasse.endsWith('Enum') || String(klasse.Stereotype || '').includes('enumeration');
             const attrs = db.attributter.filter(a => a.Klasse === klasse.Klasse);
+            const enumVals = isEnum ? getEnumValues(klasse.Klasse) : [];
             const rels = db.relationer.filter(r => r.Klasse1 === klasse.Klasse || r.Klasse2 === klasse.Klasse);
 
             let html = `
@@ -864,10 +1134,18 @@
                 html += `</div></div>`;
             }
 
-            if (attrs.length > 0) {
+            if (isEnum && enumVals.length > 0) {
+                html += `<div class="meta-group"><h4>Værdier / Literals (${enumVals.length})</h4>`;
+                enumVals.forEach(v => {
+                    html += `<p style="margin-bottom:0.5rem; border-bottom:1px solid #f1f5f9; padding-bottom:0.25rem;"><strong>${v.name}</strong>${v.definition ? `<br><span style="color:var(--text-muted); font-size:0.8rem;">${v.definition}</span>` : ''}</p>`;
+                });
+                html += `</div>`;
+            } else if (attrs.length > 0) {
                 html += `<div class="meta-group"><h4>Attributter (${attrs.length})</h4>`;
                 attrs.forEach(a => {
-                    html += `<p style="margin-bottom:0.5rem; border-bottom:1px solid #f1f5f9; padding-bottom:0.25rem;"><strong>${a.Attribut}</strong> <span style="color:var(--text-muted); font-size:0.75rem;">${a['Antal værdier'] || ''}</span><br>${a.Definition || a.Anvendelsesnote || ''}</p>`;
+                    const dt = getAttrDatatype(a);
+                    const dtBadge = dt ? ` : <em style="color:var(--accent); font-weight:600; font-style:normal;">${dt}</em>` : '';
+                    html += `<p style="margin-bottom:0.5rem; border-bottom:1px solid #f1f5f9; padding-bottom:0.25rem;"><strong>${a.Attribut}</strong>${dtBadge} <span style="color:var(--text-muted); font-size:0.75rem;">${a['Antal værdier'] || ''}</span><br>${a.Definition || a.Anvendelsesnote || ''}</p>`;
                 });
                 html += `</div>`;
             }
